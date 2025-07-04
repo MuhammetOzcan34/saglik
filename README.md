@@ -329,65 +329,7 @@ FOR INSERT WITH CHECK (
 
 ### moods
 ```sql
--- Sadece ailesindeki çocukların ruh hali kayıtlarını görebilsin
-CREATE POLICY "Ailesindeki çocukların ruh hali kayıtlarını görebilsin"
-ON public.moods
-FOR SELECT USING (
-  EXISTS (
-    SELECT 1 FROM public.children
-    WHERE children.id = moods.child_id
-      AND EXISTS (
-        SELECT 1 FROM public.family_members
-        WHERE family_members.family_id = children.family_id
-          AND family_members.user_id = auth.uid()
-      )
-  )
-);
-
--- Sadece ailesindeki çocuklara ruh hali kaydı ekleyebilsin
-CREATE POLICY "Ailesindeki çocuklara ruh hali kaydı ekleyebilsin"
-ON public.moods
-FOR INSERT WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM public.children
-    WHERE children.id = NEW.child_id
-      AND EXISTS (
-        SELECT 1 FROM public.family_members
-        WHERE family_members.family_id = children.family_id
-          AND family_members.user_id = auth.uid()
-      )
-  )
-);
-
--- Sadece ailesindeki çocukların ruh hali kayıtlarını güncelleyebilsin
-CREATE POLICY "Ailesindeki çocukların ruh hali kayıtlarını güncelleyebil"
-ON public.moods
-FOR UPDATE USING (
-  EXISTS (
-    SELECT 1 FROM public.children
-    WHERE children.id = moods.child_id
-      AND EXISTS (
-        SELECT 1 FROM public.family_members
-        WHERE family_members.family_id = children.family_id
-          AND family_members.user_id = auth.uid()
-      )
-  )
-);
-
--- Sadece ailesindeki çocukların ruh hali kayıtlarını silebilsin
-CREATE POLICY "Ailesindeki çocukların ruh hali kayıtlarını silebilsin"
-ON public.moods
-FOR DELETE USING (
-  EXISTS (
-    SELECT 1 FROM public.children
-    WHERE children.id = moods.child_id
-      AND EXISTS (
-        SELECT 1 FROM public.family_members
-        WHERE family_members.family_id = children.family_id
-          AND family_members.user_id = auth.uid()
-      )
-  )
-);
+isted
 ```
 
 ---
@@ -602,3 +544,147 @@ fetch("https://onesignal.com/api/v1/notifications", {
 **Onaylarsan, yukarıdaki adımları kod ve README olarak projene ekleyeyim.  
 App ID ve REST API Key’i kendin eklemen gerekecek (güvenlik için).  
 Devam edelim mi?**
+
+---
+
+## PWA (Progressive Web App) Desteği
+
+### 1. manifest.json
+- `public/manifest.json` dosyası PWA için gerekli tüm alanlarla doldurulmalı.
+
+### 2. Service Worker
+- `public/sw.js` dosyası temel cache ve offline desteği sağlar.
+
+### 3. index.html
+- `<head>` kısmına aşağıdaki tagler eklenmeli:
+  ```html
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  ```
+
+### 4. Service Worker Kaydı
+- `src/main.tsx` dosyasının en altına şunu ekle:
+  ```js
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js');
+    });
+  }
+  ```
+
+### 5. Test ve Yayın
+- Uygulamanı Vercel/Netlify’da aç, Chrome’da “Add to Home Screen” çıkmalı.
+- Lighthouse ile PWA testini yapabilirsin.
+- Push notification ile tam uyumludur.
+
+---
+
+## Takvim Entegrasyonu
+- Google Calendar'a etkinlik eklemek için CalendarAddButton componentini kullanabilirsin.
+- Örnek kullanım:
+  ```tsx
+  <CalendarAddButton event={{
+    start: '20240610T090000Z',
+    end: '20240610T100000Z',
+    title: 'Doktor Randevusu',
+    description: 'Çocuk doktoru kontrolü',
+    location: 'Hastane'
+  }} />
+  ```
+
+---
+
+## Veri Yedekleme
+- Tüm verileri JSON olarak indirmek için BackupExport componentini kullanabilirsin.
+- Örnek kullanım:
+  ```tsx
+  <BackupExport />
+  ```
+
+---
+
+## Çoklu Dil Desteği
+- `src/i18n.ts` dosyası react-i18next yapılandırmasını içerir.
+- `src/locales/tr/translation.json` ve `src/locales/en/translation.json` dosyalarını düzenleyerek çevirileri güncelleyebilirsin.
+- UI'da dil değiştirmek için:
+  ```tsx
+  import { useTranslation } from 'react-i18next';
+  const { t, i18n } = useTranslation();
+  <Button onClick={() => i18n.changeLanguage('en')}>EN</Button>
+  <Button onClick={() => i18n.changeLanguage('tr')}>TR</Button>
+  <h1>{t('Gelişim Takibi')}</h1>
+  ```
+
+---
+
+## Tema Sistemi
+- Koyu/açık tema için ThemeToggle componentini kullanabilirsin.
+- Örnek kullanım:
+  ```tsx
+  <ThemeToggle />
+  ```
+- Tailwind config'de dark mode 'class' olmalı.
+
+---
+
+### Olası Sebepler ve Çözümler
+
+#### 1. **Supabase Auth Oturumunun Kaybolması**
+- **Tarayıcıda 3. parti çerezler veya localStorage engelleniyorsa** oturum kaybolur.
+- **Supabase client yanlış yapılandırıldıysa** (ör. her sayfa yüklemede yeni client oluşturuluyorsa) oturum kaybolur.
+- **Vercel/Netlify gibi platformlarda domain değişiyorsa** (ör. preview, farklı subdomain) oturum kaybolur.
+
+#### 2. **Supabase Client Doğru Kullanımı**
+- `supabase` client’ı tek bir dosyada (ör. `src/lib/supabase.ts`) oluşturulmalı ve uygulama boyunca hep aynı instance kullanılmalı.
+- Her sayfa yüklemesinde yeni bir client oluşturulmamalı.
+
+#### 3. **Kullanıcı Oturumunu Kontrol Etme**
+- Kullanıcıyı kontrol etmek için:
+  ```js
+  const { data: { user } } = await supabase.auth.getUser();
+  ```
+- Eğer `user` null ise, gerçekten oturum yok demektir.
+
+#### 4. **Otomatik Oturum Yenileme**
+- Supabase, refresh token ile oturumu otomatik yeniler.  
+- Ancak, tarayıcıda “Çerezleri Temizle” veya “Gizli Mod” kullanılıyorsa oturum kaybolur.
+
+---
+
+### **Çözüm ve Kontrol Listesi**
+
+1. **supabase client’ı tek bir yerde oluştur ve her yerde onu kullan.**
+   - Örnek:  
+     ```ts
+     // src/lib/supabase.ts
+     import { createClient } from '@supabase/supabase-js';
+     export const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
+     ```
+   - Diğer dosyalarda sadece `import { supabase } from '../lib/supabase';` ile kullan.
+
+2. **Kullanıcı login olduktan sonra, sayfa yenilense bile oturum açık kalmalı.**
+   - Eğer sürekli login istiyorsa, tarayıcıda localStorage veya cookie engeli var mı kontrol et.
+
+3. **Vercel/Netlify’da farklı domain/subdomain kullanıyorsan, ana domaini kullan.**
+
+4. **Gizli modda test etme, normal modda test et.**
+
+---
+
+### **Ekstra: Otomatik Giriş (Session Restore)**
+- Uygulama açıldığında, `supabase.auth.getUser()` ile kullanıcıyı kontrol et.
+- Eğer kullanıcı yoksa login sayfasına yönlendir.
+
+---
+
+### **Hala Sorun Devam Ediyorsa:**
+- Supabase client dosyanı ve auth ile ilgili kodunu paylaş, doğrudan inceleyip sana özel çözüm sunayım.
+- Hangi ortamda (localhost, Vercel, Netlify, mobilde mi) test ettiğini belirt.
+
+---
+
+**Kısacası:**  
+Normalde her seferinde tekrar giriş yapman gerekmez.  
+Yukarıdaki adımları uygula, hala sorun varsa kodunu paylaş, kesin çözüm bulalım!

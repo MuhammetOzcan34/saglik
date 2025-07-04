@@ -20,6 +20,11 @@ function useOneSignal() {
 
 function AppRoot() {
   useOneSignal();
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js');
+    });
+  }
   return <App />;
 }
 
