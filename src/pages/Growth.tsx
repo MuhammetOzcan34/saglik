@@ -9,6 +9,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Plus, TrendingUp, Weight, Ruler, Activity } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from '../lib/utils';
+import { useNavigate } from 'react-router-dom';
 
 interface GrowthRecord {
   id: string;
@@ -37,13 +38,20 @@ const Growth = () => {
   // Get current user and child
   const [user, setUser] = useState<any>(null);
   const [selectedChild, setSelectedChild] = useState<any>(null);
+  const [children, setChildren] = useState<any[]>([]);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setUser(user);
-        // Get selected child from localStorage for now
+        // Get all children from localStorage for now
+        const childrenData = localStorage.getItem('children');
+        if (childrenData) {
+          setChildren(JSON.parse(childrenData));
+        }
+        // Get selected child
         const childData = localStorage.getItem('selectedChild');
         if (childData) {
           setSelectedChild(JSON.parse(childData));
@@ -147,8 +155,18 @@ const Growth = () => {
         <Card className="bg-white/80 backdrop-blur-sm">
           <CardContent className="p-6 text-center">
             <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Çocuk Seçilmedi</h3>
-            <p className="text-gray-600">Gelişim takibi için önce bir çocuk seçin.</p>
+            <h3 className="text-lg font-semibold mb-2">Gelişim Takibi için Çocuk Seçilmedi</h3>
+            {children.length === 0 ? (
+              <>
+                <p className="text-gray-600 mb-4">Henüz hiç çocuk eklemediniz. Gelişim takibi için önce bir çocuk ekleyin.</p>
+                <Button onClick={() => navigate('/family-setup')}>Çocuk Ekle</Button>
+              </>
+            ) : (
+              <>
+                <p className="text-gray-600 mb-4">Gelişim takibi için önce bir çocuk seçin.</p>
+                <Button onClick={() => navigate('/child-selector')}>Çocuk Seç</Button>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

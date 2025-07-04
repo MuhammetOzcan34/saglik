@@ -191,3 +191,414 @@ Sorularınız için issue açabilir veya iletişime geçebilirsiniz.
 ---
 
 **Not**: Bu uygulama şu anda geliştirme aşamasındadır. Supabase entegrasyonu tamamlandıktan sonra production'a hazır olacaktır.
+
+---
+
+## 1. Hatalı veya Karmaşık Policy’ler
+
+- **children, routines, moods** gibi tablolarda, policy’lerde iç içe EXISTS/JOIN kullanımı var. Bu, Supabase’ın policy engine’inde döngüye ve performans sorunlarına yol açabilir.
+- En güvenli ve sade yöntem: Her tablonun erişiminde, sadece bir yerde EXISTS ile family_members üzerinden user_id kontrolü yapılır. Diğer tablolarda doğrudan user_id ile kontrol yapılır.
+
+---
+
+## 2. Tüm Policy’leri Sıfırla (DROP)
+
+Aşağıdaki komutlar, mevcut policy’leri siler:
+
+```sql
+-- families
+DROP POLICY IF EXISTS "Kendi ailelerini görebilsin" ON public.families;
+DROP POLICY IF EXISTS "Aile oluşturabilsin" ON public.families;
+
+-- family_members
+DROP POLICY IF EXISTS "Kendi aile üyeliklerini görebilsin" ON public.family_members;
+DROP POLICY IF EXISTS "Aileye katılabilsin" ON public.family_members;
+
+-- children
+DROP POLICY IF EXISTS "Ailesindeki çocukları görebilsin" ON public.children;
+DROP POLICY IF EXISTS "Ailesine çocuk ekleyebilsin" ON public.children;
+
+-- routines
+DROP POLICY IF EXISTS "Ailesindeki çocukların rutinlerini görebilsin" ON public.routines;
+DROP POLICY IF EXISTS "Ailesindeki çocuklara rutin ekleyebilsin" ON public.routines;
+
+-- moods
+DROP POLICY IF EXISTS "Ailesindeki çocukların ruh hali kayıtlarını görebilsin" ON public.moods;
+DROP POLICY IF EXISTS "Ailesindeki çocuklara ruh hali kaydı ekleyebilsin" ON public.moods;
+DROP POLICY IF EXISTS "Ailesindeki çocukların ruh hali kayıtlarını güncelleyebil" ON public.moods;
+DROP POLICY IF EXISTS "Ailesindeki çocukların ruh hali kayıtlarını silebilsin" ON public.moods;
+```
+
+---
+
+## 3. Doğru ve Döngüsüz Policy’leri Oluştur (CREATE)
+
+### families
+```sql
+-- Sadece kendi üyesi olduğu aileleri görebilsin
+CREATE POLICY "Kendi ailelerini görebilsin"
+ON public.families
+FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM public.family_members
+    WHERE family_members.family_id = families.id
+      AND family_members.user_id = auth.uid()
+  )
+);
+
+-- Herkes aile oluşturabilsin
+CREATE POLICY "Aile oluşturabilsin"
+ON public.families
+FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+```
+
+### family_members
+```sql
+-- Sadece kendi üyeliklerini görebilsin
+CREATE POLICY "Kendi aile üyeliklerini görebilsin"
+ON public.family_members
+FOR SELECT USING (
+  user_id = auth.uid()
+);
+
+-- Sadece kendi adına üyelik ekleyebilsin
+CREATE POLICY "Aileye katılabilsin"
+ON public.family_members
+FOR INSERT WITH CHECK (
+  user_id = auth.uid()
+);
+```
+
+### children
+```sql
+-- Sadece üyesi olduğu ailedeki çocukları görebilsin
+CREATE POLICY "Ailesindeki çocukları görebilsin"
+ON public.children
+FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM public.family_members
+    WHERE family_members.family_id = children.family_id
+      AND family_members.user_id = auth.uid()
+  )
+);
+
+-- Sadece üyesi olduğu aileye çocuk ekleyebilsin
+CREATE POLICY "Ailesine çocuk ekleyebilsin"
+ON public.children
+FOR INSERT WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM public.family_members
+    WHERE family_members.family_id = children.family_id
+      AND family_members.user_id = auth.uid()
+  )
+);
+```
+
+### routines
+```sql
+-- Sadece ailesindeki çocukların rutinlerini görebilsin
+CREATE POLICY "Ailesindeki çocukların rutinlerini görebilsin"
+ON public.routines
+FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM public.children
+    WHERE children.id = routines.child_id
+      AND EXISTS (
+        SELECT 1 FROM public.family_members
+        WHERE family_members.family_id = children.family_id
+          AND family_members.user_id = auth.uid()
+      )
+  )
+);
+
+-- Sadece ailesindeki çocuklara rutin ekleyebilsin
+CREATE POLICY "Ailesindeki çocuklara rutin ekleyebilsin"
+ON public.routines
+FOR INSERT WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM public.children
+    WHERE children.id = NEW.child_id
+      AND EXISTS (
+        SELECT 1 FROM public.family_members
+        WHERE family_members.family_id = children.family_id
+          AND family_members.user_id = auth.uid()
+      )
+  )
+);
+```
+
+### moods
+```sql
+-- Sadece ailesindeki çocukların ruh hali kayıtlarını görebilsin
+CREATE POLICY "Ailesindeki çocukların ruh hali kayıtlarını görebilsin"
+ON public.moods
+FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM public.children
+    WHERE children.id = moods.child_id
+      AND EXISTS (
+        SELECT 1 FROM public.family_members
+        WHERE family_members.family_id = children.family_id
+          AND family_members.user_id = auth.uid()
+      )
+  )
+);
+
+-- Sadece ailesindeki çocuklara ruh hali kaydı ekleyebilsin
+CREATE POLICY "Ailesindeki çocuklara ruh hali kaydı ekleyebilsin"
+ON public.moods
+FOR INSERT WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM public.children
+    WHERE children.id = NEW.child_id
+      AND EXISTS (
+        SELECT 1 FROM public.family_members
+        WHERE family_members.family_id = children.family_id
+          AND family_members.user_id = auth.uid()
+      )
+  )
+);
+
+-- Sadece ailesindeki çocukların ruh hali kayıtlarını güncelleyebilsin
+CREATE POLICY "Ailesindeki çocukların ruh hali kayıtlarını güncelleyebil"
+ON public.moods
+FOR UPDATE USING (
+  EXISTS (
+    SELECT 1 FROM public.children
+    WHERE children.id = moods.child_id
+      AND EXISTS (
+        SELECT 1 FROM public.family_members
+        WHERE family_members.family_id = children.family_id
+          AND family_members.user_id = auth.uid()
+      )
+  )
+);
+
+-- Sadece ailesindeki çocukların ruh hali kayıtlarını silebilsin
+CREATE POLICY "Ailesindeki çocukların ruh hali kayıtlarını silebilsin"
+ON public.moods
+FOR DELETE USING (
+  EXISTS (
+    SELECT 1 FROM public.children
+    WHERE children.id = moods.child_id
+      AND EXISTS (
+        SELECT 1 FROM public.family_members
+        WHERE family_members.family_id = children.family_id
+          AND family_members.user_id = auth.uid()
+      )
+  )
+);
+```
+
+---
+
+## 4. Uygulama Sırası
+
+1. **Tüm DROP komutlarını çalıştırarak eski policy’leri sil.**
+2. **Tüm CREATE komutlarını çalıştırarak yeni policy’leri ekle.**
+3. **Supabase SQL Editor’da test et.**
+4. **Hala hata alırsan, tablo ve policy adını ilet, birlikte düzeltelim.**
+
+---
+
+### Notlar
+- `NEW.child_id` sadece INSERT policy’sinde kullanılır.
+- Policy’lerdeki mantık: Her zaman en dışta sadece bir EXISTS, içte ise user_id ile eşleşme.
+- Diğer tablolarda da aynı mantıkla policy yazabilirsin.
+
+Her tablo için eksiksiz ve döngüsüz policy’ler yukarıda!  
+Başka tablo veya özel bir senaryo varsa, belirt, hemen ekleyeyim.
+
+---
+
+## Dosya Yükleme ve Silme (Supabase Storage)
+
+### 1. Supabase Storage Bucket Oluşturma
+- Supabase panelinde "Storage" sekmesine git.
+- "New bucket" ile `documents` adında bir bucket oluştur (public olmasın).
+
+### 2. Storage Policy (RLS)
+```sql
+CREATE POLICY "Kendi çocuklarının dosyalarını yönetebilsin"
+ON storage.objects
+FOR ALL
+USING (
+  bucket_id = 'documents'
+  AND (
+    auth.role() = 'authenticated'
+    AND (
+      EXISTS (
+        SELECT 1 FROM public.family_members
+        JOIN public.children ON family_members.family_id = children.family_id
+        WHERE family_members.user_id = auth.uid()
+          AND storage.objects.name LIKE 'test-results/' || children.id || '/%'
+      )
+    )
+  )
+);
+```
+
+### 3. React ile Dosya Yükleme ve Silme
+- Dosya yükleme için `supabase.storage.from('documents').upload(...)` kullanılır.
+- Dosya silme için `supabase.storage.from('documents').remove([filePath])` kullanılır.
+- Dosya yolu: `test-results/{child_id}/{dosya_adi}` olmalı.
+
+Örnek kod için `src/pages/Tests.tsx` dosyasına bakınız.
+
+---
+
+## Web Push Bildirimleri (OneSignal)
+
+### 1. OneSignal Hesabı ve Uygulama Oluşturma
+- https://onesignal.com/ adresinden ücretsiz hesap aç.
+- "New App/Website" ile yeni bir uygulama oluştur.
+- Platform olarak Web Push seç.
+- Site URL’si olarak kendi domainini (veya localhost’u) gir.
+- App ID ve REST API Key’i not al.
+
+### 2. Web SDK’yı Projeye Ekle
+- `public/index.html` dosyasına aşağıdaki scripti ekle:
+  ```html
+  <script src="https://cdn.onesignal.com/sdks/OneSignalSDK.js" async=""></script>
+  ```
+- `src/main.tsx` dosyasında aşağıdaki hook'u ekle ve App'in en üstünde çağır:
+  ```ts
+  function useOneSignal() {
+    useEffect(() => {
+      window.OneSignal = window.OneSignal || [];
+      OneSignal.push(function() {
+        OneSignal.init({
+          appId: "ONESIGNAL_APP_ID", // Buraya kendi App ID'ni yaz!
+          notifyButton: { enable: true },
+          allowLocalhostAsSecureOrigin: true,
+        });
+      });
+    }, []);
+  }
+  // App'in en üstünde çağır: useOneSignal();
+  ```
+
+### 3. Bildirim Gönderme
+- OneSignal panelinden manuel bildirim gönderebilirsin.
+- Otomatik bildirim için REST API kullan:
+  ```js
+  fetch("https://onesignal.com/api/v1/notifications", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Basic REST_API_KEY"
+    },
+    body: JSON.stringify({
+      app_id: "ONESIGNAL_APP_ID",
+      contents: { "en": "Yeni test sonucu eklendi!" },
+      included_segments: ["All"]
+    })
+  });
+  ```
+- REST API Key ve App ID'yi OneSignal panelinden al.
+
+### Notlar
+- App ID ve REST API Key'i kimseyle paylaşma!
+- Gelişmiş entegrasyon (ör. Supabase trigger ile otomatik bildirim) için bana ulaşabilirsin.
+
+---
+
+## 1. OneSignal Web Push Bildirimleri: Genel Yol Haritası
+
+1. **OneSignal hesabı aç ve uygulama oluştur**
+2. **OneSignal Web SDK’yı projene ekle**
+3. **Kullanıcıdan izin al ve abone et**
+4. **Supabase ile kullanıcı-onesignal id eşlemesi**
+5. **Sunucudan veya panelden bildirim gönder**
+6. (Opsiyonel) **Supabase trigger ile otomatik bildirim**
+
+---
+
+## 2. Adım Adım Kurulum
+
+### A. OneSignal Hesabı ve Uygulama Oluşturma
+
+1. [https://onesignal.com/](https://onesignal.com/) adresine gir, ücretsiz hesap aç.
+2. “New App/Website” ile yeni bir uygulama oluştur.
+3. Platform olarak **Web Push** seç.
+4. “Typical Site” seçeneğini seç.
+5. Site URL’si olarak kendi domainini (veya localhost’u) gir.
+6. “Setup” adımlarını takip et, sana bir **OneSignal App ID** ve **SDK kodu** verecek.
+
+---
+
+### B. Web SDK’yı Projene Ekle
+
+#### 1. **public/index.html** dosyasına ekle:
+
+```html
+<!-- OneSignal Web SDK -->
+<script src="https://cdn.onesignal.com/sdks/OneSignalSDK.js" async=""></script>
+```
+
+#### 2. **src/main.tsx** veya App’in ilk yüklenen dosyasında başlat:
+
+```ts
+<code_block_to_apply_changes_from>
+```
+Ve App’in en üstünde çağır:
+```ts
+useOneSignal();
+```
+
+---
+
+### C. Kullanıcıdan İzin Al ve Abone Et
+
+- Kullanıcı siteye girdiğinde OneSignal otomatik izin isteyecek.
+- Kullanıcı izin verirse, OneSignal bir **userId** (playerId) oluşturur.
+- Bunu Supabase’de user_profile tablosuna kaydedebilirsin (isteğe bağlı).
+
+---
+
+### D. Bildirim Gönderme
+
+#### 1. **Manuel Bildirim (Panelden)**
+- OneSignal panelinden istediğin kullanıcıya veya tüm kullanıcılara bildirim gönderebilirsin.
+
+#### 2. **Otomatik Bildirim (API ile)**
+- Bir olay olduğunda (örn. yeni test sonucu, ilaç zamanı) Supabase Functions veya backend’den OneSignal REST API ile bildirim gönderebilirsin.
+- [OneSignal API dokümantasyonu](https://documentation.onesignal.com/reference/create-notification)
+
+Örnek fetch:
+```js
+fetch("https://onesignal.com/api/v1/notifications", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Basic REST_API_KEY" // OneSignal panelinden alınır
+  },
+  body: JSON.stringify({
+    app_id: "ONESIGNAL_APP_ID",
+    contents: { "en": "Yeni test sonucu eklendi!" },
+    included_segments: ["All"] // veya player_ids: [...]
+  })
+});
+```
+
+---
+
+### E. (Opsiyonel) Supabase ile Otomatik Bildirim
+
+- Supabase trigger veya function ile yeni kayıt eklendiğinde webhook tetikleyip bildirim gönderebilirsin.
+- Gelişmiş entegrasyon için bana bildir, örnek kod hazırlayabilirim.
+
+---
+
+## 3. README’ye Eklenmesi Gerekenler
+
+- OneSignal entegrasyon adımları ve App ID/REST API Key’in nasıl alınacağı.
+- Bildirim gönderme örnekleri.
+
+---
+
+## 4. Sonraki Adım
+
+**Onaylarsan, yukarıdaki adımları kod ve README olarak projene ekleyeyim.  
+App ID ve REST API Key’i kendin eklemen gerekecek (güvenlik için).  
+Devam edelim mi?**

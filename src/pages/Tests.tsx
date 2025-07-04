@@ -10,6 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, FileCheck, Upload, Download, Activity } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from '../lib/utils';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
 interface TestResult {
   id: string;
@@ -212,6 +215,63 @@ const Tests = () => {
     }
   };
 
+  const deleteFile = async (test: TestResult) => {
+    if (!test.file_url || !test.file_name) return;
+    setLoading(true);
+    try {
+      // Dosya yolu: test-results/{child_id}/{dosya_adi}
+      const filePath = `test-results/${test.child_id}/${test.file_name}`;
+      const { error: removeError } = await supabase.storage
+        .from('documents')
+        .remove([filePath]);
+      if (removeError) throw removeError;
+      // Test kaydındaki file_url ve file_name alanlarını null yap
+      const { error: updateError } = await supabase
+        .from('test_results')
+        .update({ file_url: null, file_name: null })
+        .eq('id', test.id);
+      if (updateError) throw updateError;
+      toast({
+        title: 'Başarılı',
+        description: 'Dosya silindi.',
+      });
+      fetchTests();
+    } catch (error) {
+      toast({
+        title: 'Hata',
+        description: 'Dosya silinirken hata oluştu.',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportToCSV = () => {
+    const ws = XLSX.utils.json_to_sheet(tests.map(({ id, child_id, created_at, ...rest }) => rest));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'TestSonuclari');
+    XLSX.writeFile(wb, 'test_sonuclari.xlsx');
+  };
+
+  const exportToPDF = () => {
+    const doc = new jsPDF();
+    const tableColumn = [
+      'Test Türü', 'Tarih', 'Sonuç', 'Normal Aralık', 'Değer', 'Doktor Notu', 'Dosya'
+    ];
+    const tableRows = tests.map(test => [
+      getTestTypeLabel(test.test_type),
+      test.test_date,
+      test.result_summary,
+      test.normal_range || '-',
+      test.actual_value || '-',
+      test.doctor_notes || '-',
+      test.file_name || '-'
+    ]);
+    doc.autoTable({ head: [tableColumn], body: tableRows });
+    doc.save('test_sonuclari.pdf');
+  };
+
   if (!selectedChild) {
     return (
       <div className="container mx-auto px-4 py-6">
@@ -346,14 +406,21 @@ const Tests = () => {
                       <TableCell className="max-w-xs truncate">{test.doctor_notes || '-'}</TableCell>
                       <TableCell>
                         {test.file_url ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => downloadFile(test.file_url!, test.file_name || 'test-result')}
-                          >
-                            <Download className="h-4 w-4 mr-1" />
-                            İndir
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => downloadFile(test.file_url!, test.file_name || 'test-result')}
+                            >
+                              <Download className="h-4 w-4 mr-1" />
+                              İndir
+                            </Button>
+                            {test.file_url && (
+                              <Button variant="destructive" size="sm" onClick={() => deleteFile(test)}>
+                                Sil
+                              </Button>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-gray-400">-</span>
                         )}
@@ -487,6 +554,10 @@ const Tests = () => {
           </Card>
         </div>
       )}
+      <div className="flex gap-2 mb-4">
+        <Button variant="outline" onClick={exportToCSV}>CSV İndir</Button>
+        <Button variant="outline" onClick={exportToPDF}>PDF İndir</Button>
+      </div>
     </div>
   );
 };
