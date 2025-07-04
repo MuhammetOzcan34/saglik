@@ -149,6 +149,24 @@ const Growth = () => {
     }))
     .reverse();
 
+  // Yardımcı fonksiyonlar:
+  function getStats(records, key) {
+    const values = records.map(r => r[key]).filter(v => v != null);
+    if (values.length === 0) return { last: '-', prev: '-', min: '-', max: '-', avg: '-' };
+    const last = values[values.length - 1];
+    const prev = values.length > 1 ? values[values.length - 2] : null;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const avg = (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2);
+    return { last, prev, min, max, avg };
+  }
+  function getChange(last, prev) {
+    if (last == null || prev == null || prev === 0) return null;
+    const diff = last - prev;
+    const percent = ((diff / prev) * 100).toFixed(1);
+    return { diff, percent };
+  }
+
   if (!selectedChild) {
     return (
       <div className="container mx-auto px-4 py-6">
@@ -185,6 +203,36 @@ const Growth = () => {
           <Plus className="h-4 w-4 mr-2" />
           Yeni Ölçüm Ekle
         </Button>
+      </div>
+
+      {/* Gelişim Özeti */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {['weight', 'height', 'head_circumference'].map((key, i) => {
+          const label = key === 'weight' ? 'Kilo (kg)' : key === 'height' ? 'Boy (cm)' : 'Baş Çevresi (cm)';
+          const stats = getStats(records, key);
+          const change = getChange(stats.last, stats.prev);
+          return (
+            <Card key={key} className="bg-white/80 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle>{label}</CardTitle>
+                <CardDescription>
+                  Son Ölçüm: <b>{stats.last ?? '-'}</b>
+                  {change && (
+                    <span className={change.diff > 0 ? 'text-green-600 ml-2' : 'text-red-600 ml-2'}>
+                      {change.diff > 0 ? '+' : ''}{change.diff} ({change.percent}%)
+                    </span>
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-1 text-sm">
+                <div>Önceki: <b>{stats.prev ?? '-'}</b></div>
+                <div>Min: <b>{stats.min ?? '-'}</b></div>
+                <div>Max: <b>{stats.max ?? '-'}</b></div>
+                <div>Ortalama: <b>{stats.avg ?? '-'}</b></div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       {/* Charts */}
