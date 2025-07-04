@@ -30,6 +30,7 @@ import Temperature from './Temperature';
 import Profile from './Profile';
 import Notifications from './Notifications';
 import Settings from './Settings';
+import { supabase } from '../lib/supabase';
 
 interface Child {
   id: string;
@@ -45,7 +46,7 @@ interface Child {
 }
 
 const Index = () => {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState<any>(null);
   const [hasFamily, setHasFamily] = useState(false);
   const [children, setChildren] = useState<Child[]>([]);
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);
@@ -64,10 +65,19 @@ const Index = () => {
 
   // Uygulama başladığında localStorage'dan çocuk bilgisini yükle
   useEffect(() => {
-    const savedChild = localStorage.getItem('selectedChild');
-    if (savedChild) {
-      setSelectedChild(JSON.parse(savedChild));
-    }
+    // Uygulama açıldığında Supabase oturumunu kontrol et
+    const checkUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user);
+    };
+    checkUser();
+    // Oturum değişikliklerini dinle
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+    return () => {
+      listener?.subscription.unsubscribe();
+    };
   }, []);
 
   const handleLogin = (userData: any) => {
