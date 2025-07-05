@@ -964,25 +964,264 @@ CREATE TRIGGER update_children_updated_at BEFORE UPDATE ON children
 CREATE TRIGGER update_user_profiles_updated_at BEFORE UPDATE ON user_profiles
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Insert sample data for testing (optional)
--- You can uncomment these lines to add sample data
+-- Trigger: Yeni kullanıcı kaydolduğunda user_profiles tablosuna otomatik olarak veri ekle
+-- Mevcut trigger'ı sil (eğer varsa)
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 
-/*
--- Sample family data
-INSERT INTO families (name, description) VALUES
-('Yılmaz Ailesi', 'Ahmet ve Ayşe\'nin ailesi');
+-- Trigger fonksiyonunu sil/yeniden oluştur
+DROP FUNCTION IF EXISTS public.handle_new_user();
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.user_profiles (user_id, name, email)
+  VALUES (NEW.id, NEW.email, NEW.email);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Sample family members data
-INSERT INTO family_members (family_id, user_id, role, relationship, is_primary) VALUES
-((SELECT id FROM families WHERE name = 'Yılmaz Ailesi' LIMIT 1), 'your-user-id-here', 'parent', 'Anne', true);
+-- Trigger'ı bağla: auth.users tablosuna yeni bir kayıt eklendiğinde çalışacak.
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
--- Sample children data
-INSERT INTO children (family_id, name, birth_date, gender, weight, height, allergies, medications, conditions, notes) VALUES
-((SELECT id FROM families WHERE name = 'Yılmaz Ailesi' LIMIT 1), 'Ahmet Yılmaz', '2020-03-15', 'male', 15.5, 95.0, 'Fındık alerjisi', 'Vitamin D', 'Astım', 'Aktif ve enerjik çocuk'),
-((SELECT id FROM families WHERE name = 'Yılmaz Ailesi' LIMIT 1), 'Ayşe Yılmaz', '2018-07-22', 'female', 22.0, 110.0, 'Yok', 'Yok', 'Yok', 'Okul öncesi dönemde');
+-- ===== SAĞLIK TAKİP UYGULAMASI İÇİN GEREKLİ TRİGGERLER =====
 
--- Sample notifications data
-INSERT INTO notifications (user_id, child_id, type, title, message, is_important) VALUES
-('your-user-id-here', (SELECT id FROM children WHERE name = 'Ahmet Yılmaz' LIMIT 1), 'medication', 'İlaç Hatırlatıcısı', 'Ahmet için sabah ilacı zamanı geldi', true),
-('your-user-id-here', (SELECT id FROM children WHERE name = 'Ahmet Yılmaz' LIMIT 1), 'appointment', 'Doktor Randevusu', 'Yarın saat 14:00\'da Dr. Ayşe ile randevunuz var', true);
-*/ 
+-- 1. İlaç Hatırlatıcıları için Trigger
+CREATE OR REPLACE FUNCTION create_medication_reminder()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- İlaç kaydı eklendiğinde otomatik bildirim oluştur
+    INSERT INTO notifications (user_id, child_id, type, title, message, is_important)
+    SELECT 
+        c.user_id,
+        NEW.child_id,
+        'medication',
+        'İlaç Hatırlatıcısı',
+        'İlaç zamanı: ' || NEW.medication_name,
+        true
+    FROM children c WHERE c.id = NEW.child_id;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_medication_reminder 
+    AFTER INSERT ON medication_records
+    FOR EACH ROW EXECUTE FUNCTION create_medication_reminder();
+
+-- 2. Randevu Hatırlatıcıları
+CREATE OR REPLACE FUNCTION create_appointment_reminder()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO notifications (user_id, child_id, type, title, message, is_important)
+    SELECT 
+        c.user_id,
+        NEW.child_id,
+        'appointment',
+        'Randevu Hatırlatıcısı',
+        'Yarın ' || COALESCE(NEW.time::text, 'belirtilmemiş saat') || ' saatinde ' || COALESCE(NEW.doctor_name, 'doktor') || ' ile randevunuz var',
+        true
+    FROM children c WHERE c.id = NEW.child_id;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_appointment_reminder 
+    AFTER INSERT ON appointments
+    FOR EACH ROW EXECUTE FUNCTION create_appointment_reminder();
+
+-- 3. Ateş Uyarı Triggeri
+CREATE OR REPLACE FUNCTION check_temperature_alert()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.temperature > 38.0 THEN
+        INSERT INTO notifications (user_id, child_id, type, title, message, is_important)
+        SELECT 
+            c.user_id,
+            NEW.child_id,
+            'temperature',
+            'Yüksek Ateş Uyarısı',
+            'Ateş: ' || NEW.temperature || '°C - Doktora başvurunuz',
+            true
+        FROM children c WHERE c.id = NEW.child_id;
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_temperature_alert 
+    AFTER INSERT ON temperature_records
+    FOR EACH ROW EXECUTE FUNCTION check_temperature_alert();
+
+-- 4. Büyüme Takibi Triggeri
+CREATE OR REPLACE FUNCTION analyze_growth_pattern()
+RETURNS TRIGGER AS $$
+DECLARE
+    prev_weight DECIMAL(5,2);
+    weight_change DECIMAL(5,2);
+BEGIN
+    -- Önceki ağırlık kaydını al
+    SELECT weight INTO prev_weight 
+    FROM growth_records 
+    WHERE child_id = NEW.child_id 
+    AND date < NEW.date 
+    ORDER BY date DESC 
+    LIMIT 1;
+    
+    IF prev_weight IS NOT NULL AND NEW.weight IS NOT NULL THEN
+        weight_change := NEW.weight - prev_weight;
+        
+        -- Aşırı kilo kaybı/gain durumunda uyarı
+        IF ABS(weight_change) > 2.0 THEN
+            INSERT INTO notifications (user_id, child_id, type, title, message, is_important)
+            SELECT 
+                c.user_id,
+                NEW.child_id,
+                'growth',
+                'Büyüme Değişikliği',
+                'Son ölçümde ' || 
+                CASE WHEN weight_change > 0 THEN '+' ELSE '' END || 
+                weight_change || ' kg değişim tespit edildi',
+                true
+            FROM children c WHERE c.id = NEW.child_id;
+        END IF;
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_growth_analysis 
+    AFTER INSERT ON growth_records
+    FOR EACH ROW EXECUTE FUNCTION analyze_growth_pattern();
+
+-- 5. Nöbet Kaydı Triggeri
+CREATE OR REPLACE FUNCTION create_seizure_alert()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO notifications (user_id, child_id, type, title, message, is_important)
+    SELECT 
+        c.user_id,
+        NEW.child_id,
+        'system',
+        'Nöbet Kaydı',
+        NEW.duration || ' saniye süren ' || NEW.type || ' nöbeti kaydedildi',
+        true
+    FROM children c WHERE c.id = NEW.child_id;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_seizure_alert 
+    AFTER INSERT ON seizure_records
+    FOR EACH ROW EXECUTE FUNCTION create_seizure_alert();
+
+-- 6. Aile Üyesi Ekleme Triggeri
+CREATE OR REPLACE FUNCTION welcome_family_member()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO notifications (user_id, child_id, type, title, message, is_important)
+    SELECT 
+        NEW.user_id,
+        c.id,
+        'system',
+        'Hoş Geldiniz',
+        'Aile grubuna başarıyla katıldınız',
+        false
+    FROM children c 
+    WHERE c.family_id = NEW.family_id;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_welcome_member 
+    AFTER INSERT ON family_members
+    FOR EACH ROW EXECUTE FUNCTION welcome_family_member();
+
+-- 7. Eksik Updated_at Triggerleri
+CREATE TRIGGER update_medication_records_updated_at BEFORE UPDATE ON medication_records
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_nutrition_records_updated_at BEFORE UPDATE ON nutrition_records
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_temperature_records_updated_at BEFORE UPDATE ON temperature_records
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_growth_records_updated_at BEFORE UPDATE ON growth_records
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_daily_routines_updated_at BEFORE UPDATE ON daily_routines
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_appointments_updated_at BEFORE UPDATE ON appointments
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_seizure_records_updated_at BEFORE UPDATE ON seizure_records
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_allergies_updated_at BEFORE UPDATE ON allergies
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_health_history_updated_at BEFORE UPDATE ON health_history
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_physical_activities_updated_at BEFORE UPDATE ON physical_activities
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_test_results_updated_at BEFORE UPDATE ON test_results
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_calendar_events_updated_at BEFORE UPDATE ON calendar_events
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_doctors_updated_at BEFORE UPDATE ON doctors
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- 8. Günlük Rutin Hatırlatıcısı
+CREATE OR REPLACE FUNCTION create_routine_reminder()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO notifications (user_id, child_id, type, title, message, is_important)
+    SELECT 
+        c.user_id,
+        NEW.child_id,
+        'routine',
+        'Günlük Rutin Hatırlatıcısı',
+        NEW.activity || ' aktivitesi zamanı geldi',
+        false
+    FROM children c WHERE c.id = NEW.child_id;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_routine_reminder 
+    AFTER INSERT ON daily_routines
+    FOR EACH ROW EXECUTE FUNCTION create_routine_reminder();
+
+-- 9. Alerji Uyarısı
+CREATE OR REPLACE FUNCTION create_allergy_alert()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO notifications (user_id, child_id, type, title, message, is_important)
+    SELECT 
+        c.user_id,
+        NEW.child_id,
+        'system',
+        'Yeni Alerji Kaydı',
+        NEW.name || ' alerjisi eklendi. Şiddet: ' || COALESCE(NEW.severity, 'belirtilmemiş'),
+        true
+    FROM children c WHERE c.id = NEW.child_id;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_allergy_alert 
+    AFTER INSERT ON allergies
+    FOR EACH ROW EXECUTE FUNCTION create_allergy_alert(); 

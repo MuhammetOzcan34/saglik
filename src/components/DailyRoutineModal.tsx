@@ -305,16 +305,16 @@ const DailyRoutineModal = ({ isOpen, onClose, childId }: DailyRoutineModalProps)
                 )}
 
                 {/* Notes */}
-                <div className="space-y-2">
-                  <Label htmlFor="notes">Notlar (Opsiyonel)</Label>
-                  <Textarea
-                    id="notes"
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notlar (Opsiyonel)</Label>
+              <Textarea
+                id="notes"
                     placeholder="Özel durumlar, gözlemler, detaylar..."
                     value={formData.notes}
                     onChange={(e) => setFormData({...formData, notes: e.target.value})}
                     rows={3}
-                  />
-                </div>
+              />
+            </div>
               </div>
             )}
 

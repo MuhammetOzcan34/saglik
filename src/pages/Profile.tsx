@@ -29,6 +29,7 @@ import {
   Users
 } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from '@/lib/supabase';
 
 interface Child {
   id: string;
@@ -51,7 +52,6 @@ interface UserProfile {
   phone: string;
   address: string;
   birthDate: string;
-  photoUrl?: string;
   emergencyContact: {
     name: string;
     phone: string;
@@ -79,6 +79,7 @@ const Profile = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [showChildForm, setShowChildForm] = useState(false);
   const [editingChild, setEditingChild] = useState<Child | null>(null);
+  const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
   const [childFormData, setChildFormData] = useState({
@@ -94,77 +95,225 @@ const Profile = () => {
   });
 
   useEffect(() => {
-    // Load children from localStorage
-    const savedChildren = localStorage.getItem('childrenData');
-    if (savedChildren) {
-      setChildren(JSON.parse(savedChildren));
-    }
-
-    // Load selected child
-    const savedSelectedChild = localStorage.getItem('selectedChild');
-    if (savedSelectedChild) {
-      setSelectedChild(JSON.parse(savedSelectedChild));
-    }
+    fetchUserProfile();
+    fetchChildren();
   }, []);
 
-  const handleProfileSave = () => {
-    setIsEditing(false);
-    toast({
-      title: "Profil güncellendi!",
-      description: "Profil bilgileriniz başarıyla kaydedildi.",
-    });
+  const fetchUserProfile = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .single();
+
+        if (data && !error) {
+          setUserProfile({
+            id: data.id,
+            name: data.name || '',
+            email: data.email || '',
+            phone: data.phone || '',
+            address: data.address || '',
+            birthDate: data.birth_date || '',
+            emergencyContact: {
+              name: data.emergency_contact_name || '',
+              phone: data.emergency_contact_phone || '',
+              relationship: data.emergency_contact_relationship || ''
+            }
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching user profile:', error);
+    }
   };
 
-  const handleChildSave = () => {
-    if (editingChild) {
-      // Update existing child
-      const updatedChildren = children.map(child => 
-        child.id === editingChild.id 
-          ? { ...child, ...childFormData }
-          : child
-      );
-      setChildren(updatedChildren);
-      localStorage.setItem('childrenData', JSON.stringify(updatedChildren));
-      
+  const fetchChildren = async () => {
+    try {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        // Önce kullanıcının aile üyeliğini kontrol et
+        const { data: familyMember } = await supabase
+          .from('family_members')
+          .select('family_id')
+          .eq('user_id', user.id)
+          .single();
+
+        if (familyMember) {
+          // Aileye ait çocukları getir
+          const { data: childrenData, error } = await supabase
+            .from('children')
+            .select('*')
+            .eq('family_id', familyMember.family_id)
+            .order('name');
+
+          if (error) throw error;
+          setChildren(childrenData || []);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching children:', error);
       toast({
-        title: "Çocuk profili güncellendi!",
-        description: `${childFormData.name} profil bilgileri güncellendi.`,
+        title: "Hata",
+        description: "Çocuk bilgileri yüklenirken hata oluştu.",
+        variant: "destructive"
       });
-    } else {
-      // Add new child
-      const newChild: Child = {
-        id: Date.now().toString(),
-        ...childFormData
-      };
-      const updatedChildren = [...children, newChild];
-      setChildren(updatedChildren);
-      localStorage.setItem('childrenData', JSON.stringify(updatedChildren));
-      
-      toast({
-        title: "Çocuk profili eklendi!",
-        description: `${childFormData.name} profili başarıyla eklendi.`,
-      });
+    } finally {
+      setLoading(false);
     }
-    
-    resetChildForm();
   };
 
-  const handleChildDelete = (childId: string) => {
-    if (!confirm('Bu çocuk profilini silmek istediğinizden emin misiniz?')) return;
-    
-    const updatedChildren = children.filter(child => child.id !== childId);
-    setChildren(updatedChildren);
-    localStorage.setItem('childrenData', JSON.stringify(updatedChildren));
-    
-    if (selectedChild?.id === childId) {
-      setSelectedChild(null);
-      localStorage.removeItem('selectedChild');
+  const handleProfileSave = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { error } = await supabase
+          .from('user_profiles')
+          .upsert({
+            user_id: user.id,
+            name: userProfile.name,
+            email: userProfile.email,
+            phone: userProfile.phone,
+            address: userProfile.address,
+            birth_date: userProfile.birthDate,
+            emergency_contact_name: userProfile.emergencyContact.name,
+            emergency_contact_phone: userProfile.emergencyContact.phone,
+            emergency_contact_relationship: userProfile.emergencyContact.relationship
+          });
+
+        if (error) throw error;
+        
+        setIsEditing(false);
+        toast({
+          title: "Profil güncellendi!",
+          description: "Profil bilgileriniz başarıyla kaydedildi.",
+        });
+      }
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      toast({
+        title: "Hata",
+        description: "Profil güncellenirken hata oluştu.",
+        variant: "destructive"
+      });
     }
+  };
+
+  const handleChildSave = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Kullanıcının aile ID'sini al
+      const { data: familyMember } = await supabase
+        .from('family_members')
+        .select('family_id')
+        .eq('user_id', user.id)
+        .single();
+
+      if (!familyMember) {
+        toast({
+          title: "Hata",
+          description: "Aile bilgisi bulunamadı.",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      if (editingChild) {
+        // Update existing child
+        const { error } = await supabase
+          .from('children')
+          .update({
+            name: childFormData.name,
+            birth_date: childFormData.birthDate,
+            gender: childFormData.gender,
+            weight: childFormData.weight ? parseFloat(childFormData.weight) : null,
+            height: childFormData.height ? parseFloat(childFormData.height) : null,
+            allergies: childFormData.allergies,
+            medications: childFormData.medications,
+            conditions: childFormData.conditions,
+            notes: childFormData.notes
+          })
+          .eq('id', editingChild.id);
+
+        if (error) throw error;
+        
+        toast({
+          title: "Çocuk profili güncellendi!",
+          description: `${childFormData.name} profil bilgileri güncellendi.`,
+        });
+      } else {
+        // Add new child
+        const { error } = await supabase
+          .from('children')
+          .insert({
+            family_id: familyMember.family_id,
+            name: childFormData.name,
+            birth_date: childFormData.birthDate,
+            gender: childFormData.gender,
+            weight: childFormData.weight ? parseFloat(childFormData.weight) : null,
+            height: childFormData.height ? parseFloat(childFormData.height) : null,
+            allergies: childFormData.allergies,
+            medications: childFormData.medications,
+            conditions: childFormData.conditions,
+            notes: childFormData.notes
+          });
+
+        if (error) throw error;
+        
+        toast({
+          title: "Çocuk profili eklendi!",
+          description: `${childFormData.name} profili başarıyla eklendi.`,
+        });
+      }
+      
+      resetChildForm();
+      fetchChildren(); // Listeyi yenile
+    } catch (error) {
+      console.error('Error saving child:', error);
+      toast({
+        title: "Hata",
+        description: "Çocuk profili kaydedilirken hata oluştu.",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleChildDelete = async (childId: string) => {
+    if (!confirm('Bu çocuk profilini silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) return;
     
-    toast({
-      title: "Profil silindi!",
-      description: "Çocuk profili başarıyla silindi.",
-    });
+    try {
+      const { error } = await supabase
+        .from('children')
+        .delete()
+        .eq('id', childId);
+
+      if (error) throw error;
+      
+      // Eğer silinen çocuk aktif çocuk ise, seçimi kaldır
+      if (selectedChild?.id === childId) {
+        setSelectedChild(null);
+        localStorage.removeItem('selectedChild');
+      }
+      
+      toast({
+        title: "Profil silindi!",
+        description: "Çocuk profili başarıyla silindi.",
+      });
+      
+      fetchChildren(); // Listeyi yenile
+    } catch (error) {
+      console.error('Error deleting child:', error);
+      toast({
+        title: "Hata",
+        description: "Çocuk profili silinirken hata oluştu.",
+        variant: "destructive"
+      });
+    }
   };
 
   const handleChildSelect = (child: Child) => {
@@ -208,6 +357,7 @@ const Profile = () => {
       });
     } else {
       setEditingChild(null);
+      resetChildForm();
     }
     setShowChildForm(true);
   };
@@ -215,14 +365,18 @@ const Profile = () => {
   const calculateAge = (birthDate: string) => {
     const today = new Date();
     const birth = new Date(birthDate);
-    let age = today.getFullYear() - birth.getFullYear();
-    const monthDiff = today.getMonth() - birth.getMonth();
+    const diffTime = Math.abs(today.getTime() - birth.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-      age--;
+    if (diffDays < 30) {
+      return `${diffDays} gün`;
+    } else if (diffDays < 365) {
+      return `${Math.floor(diffDays / 30)} ay`;
+    } else {
+      const years = Math.floor(diffDays / 365);
+      const months = Math.floor((diffDays % 365) / 30);
+      return months > 0 ? `${years} yaş ${months} ay` : `${years} yaş`;
     }
-    
-    return age;
   };
 
   return (
@@ -419,7 +573,11 @@ const Profile = () => {
               </div>
             </CardHeader>
             <CardContent>
-              {children.length === 0 ? (
+              {loading ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-600">Çocuklar yükleniyor...</p>
+                </div>
+              ) : children.length === 0 ? (
                 <div className="text-center py-8">
                   <Baby className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                   <p className="text-gray-600">Henüz çocuk profili eklenmemiş.</p>
@@ -444,7 +602,7 @@ const Profile = () => {
                             <div>
                               <h4 className="font-semibold">{child.name}</h4>
                               <p className="text-sm text-gray-600">
-                                {calculateAge(child.birthDate)} yaşında
+                                {calculateAge(child.birthDate)}
                               </p>
                             </div>
                           </div>

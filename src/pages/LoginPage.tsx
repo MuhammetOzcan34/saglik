@@ -44,13 +44,13 @@ const LoginPage = ({ onLogin }: LoginPageProps) => {
           id: data.user.id,
           name: data.user.user_metadata?.name || data.user.email,
           email: data.user.email,
-          loginTime: new Date().toISOString()
-        };
-        onLogin(userData);
-        toast({
-          title: "Başarıyla giriş yapıldı!",
-          description: "Hoş geldiniz.",
-        });
+        loginTime: new Date().toISOString()
+      };
+      onLogin(userData);
+      toast({
+        title: "Başarıyla giriş yapıldı!",
+        description: "Hoş geldiniz.",
+      });
       }
     }
   };
@@ -83,17 +83,17 @@ const LoginPage = ({ onLogin }: LoginPageProps) => {
         return;
       }
       if (data.user) {
-        const userData = {
+      const userData = {
           id: data.user.id,
-          name: registerForm.name,
-          email: registerForm.email,
-          loginTime: new Date().toISOString()
-        };
-        onLogin(userData);
-        toast({
-          title: "Hesap başarıyla oluşturuldu!",
-          description: "Hoş geldiniz.",
-        });
+        name: registerForm.name,
+        email: registerForm.email,
+        loginTime: new Date().toISOString()
+      };
+      onLogin(userData);
+      toast({
+        title: "Hesap başarıyla oluşturuldu!",
+        description: "Hoş geldiniz.",
+      });
       } else {
         toast({
           title: "Kayıt başarılı!",
